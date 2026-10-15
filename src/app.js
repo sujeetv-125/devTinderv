@@ -22,4 +22,8 @@ app.listen(7777, () => {
 });
 
 
-//order is imp
+//order is imp  
+
+//ab?c means b is optional
+//ab+c means you can include as much b as you want
+//ab*cd means you can give anything in between ab and cd
