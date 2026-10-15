@@ -1,22 +1,34 @@
 const express = require("express");
 
 const app = express();
-//this will only handle get call to /user
-app.get("/user",(req,res)=> {
-    res.send({firsName: "sujeet", lastname: "kumar"});
-});
-app.post("/user",(req,res)=> {
-    res.send("posted succesfully");
+
+
+app.get("/error",(req,res)=>{
+    try{
+        //logic of db call
+        throw new Error("addda");
+        res.send("user daata send");
+    }
+    catch(err){
+        res.status(500).send("something went wrong");
+    }
 });
 
-app.delete("/user",(req,res)=> {
-    res.send("deleted succesfully");
-});
-//this will match all the http method api calls to /test
-app.use("/test" , (req, res) => {
-    res.send("hello from the server !");
+const {adminauth,userauth} = require("./auth.js");
+app.use ("/admin",adminauth);
+app.get("/user/data", userauth, (req,res)=>{
+    res.send("user logged ");
 });
 
+app.post("/user/data",(req,res)=>{
+    res.send("user data send");
+})
+app.get("/admin/getall", (req,res)=>{
+    res.send("all data sent");
+});
+app.delete("/admin/delall", (req,res)=>{
+    res.send("all data del");
+});
 app.listen(7777, () => {
     console.log("server is successfully listening on port 7777");
 });
