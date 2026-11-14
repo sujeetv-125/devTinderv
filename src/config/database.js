@@ -1,9 +1,10 @@
 const mongoose = require("mongoose");
 
-const connectDB = async () => {
-    await mongoose.connect(
-        "mongodb+srv://jitendras22672_db_user:O9fczTgbdFp44IiC@cluster-new.8s6dl5c.mongodb.net/devTinder"
-    );
-};
+async function connectDB() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error("MONGODB_URI is missing. Add it to your .env file.");
+  await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });
+  return mongoose.connection;
+}
 
 module.exports = connectDB;

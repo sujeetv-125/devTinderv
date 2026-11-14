@@ -1,62 +1,78 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const User = require("../models/user");
+const ConnectionRequest = require("../models/connectionRequest");
 const { userAuth } = require("../auth");
+const { scoreCompatibility } = require("../utils/matchingService");
 
-const userRouter = express.Router(); // Router must be called with ()
-
-// only these fields can be changed through PATCH /users
-const ALLOWED_UPDATES = [
-  "firstName",
-  "lastName",
-  "age",
-  "gender",
-  "photoUrl",
-  "about",
-  "skills",
-];
+const userRouter = express.Router();
+const SAFE_USER_FIELDS = "firstName lastName photoUrl about skills skillsWanted lookingFor availability preferredProjects";
 
 userRouter.get("/feed", userAuth, async (req, res) => {
   try {
-    // only return public fields (never the password hash)
-    const users = await User.find({}).select(
-      "firstName lastName photoUrl age gender about skills"
-    );
-    res.send(users);
-  } catch (err) {
-    res.status(400).send("ERROR: " + err.message);
-  }
-});
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(30, Math.max(1, Number.parseInt(req.query.limit, 10) || 10));
 
-// deletes the logged-in user's own account
-userRouter.delete("/users", userAuth, async (req, res) => {
-  try {
-    await User.findByIdAndDelete(req.user._id);
-    res.clearCookie("token");
-    res.send("user deleted successfully");
-  } catch (err) {
-    res.status(400).send("ERROR: " + err.message);
-  }
-});
+    const interactions = await ConnectionRequest.find({
+      $or: [{ fromUserId: req.user._id }, { toUserId: req.user._id }],
+    }).select("fromUserId toUserId").lean();
 
-// updates the logged-in user's own profile
-userRouter.patch("/users", userAuth, async (req, res) => {
-  try {
-    const updates = {};
-    for (const key of Object.keys(req.body)) {
-      if (!ALLOWED_UPDATES.includes(key)) {
-        throw new Error("Update not allowed for field: " + key);
-      }
-      updates[key] = req.body[key];
+    const excludedIds = new Set([req.user._id.toString()]);
+    for (const interaction of interactions) {
+      excludedIds.add(interaction.fromUserId.toString());
+      excludedIds.add(interaction.toUserId.toString());
     }
 
-    const updatedUser = await User.findByIdAndUpdate(req.user._id, updates, {
-      new: true,
-      runValidators: true, // run schema validators (age, gender, photoUrl, ...) on updates too
-    }).select("-password");
+    const query = {
+      _id: { $nin: [...excludedIds].map((id) => new mongoose.Types.ObjectId(id)) },
+    };
 
-    res.send(updatedUser);
-  } catch (err) {
-    res.status(400).send("ERROR: " + err.message);
+    if (typeof req.query.skill === "string" && req.query.skill.trim()) {
+      query.skills = req.query.skill.trim();
+    }
+    if (typeof req.query.lookingFor === "string" && req.query.lookingFor.trim()) {
+      query.lookingFor = req.query.lookingFor.trim();
+    }
+    if (typeof req.query.availability === "string" && req.query.availability.trim()) {
+      query.availability = req.query.availability.trim();
+    }
+
+    const candidates = await User.find(query)
+      .select(SAFE_USER_FIELDS)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const ranked = candidates
+      .map((candidate) => ({ ...candidate, ...scoreCompatibility(req.user, candidate) }))
+      .sort((a, b) => b.compatibilityScore - a.compatibilityScore);
+
+    const total = ranked.length;
+    const data = ranked.slice((page - 1) * limit, page * limit);
+
+    return res.json({
+      data,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+userRouter.delete("/users", userAuth, async (req, res) => {
+  try {
+    await ConnectionRequest.deleteMany({
+      $or: [{ fromUserId: req.user._id }, { toUserId: req.user._id }],
+    });
+    await User.findByIdAndDelete(req.user._id);
+
+    return res.clearCookie("token", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+    }).json({ message: "Account and its connection activity deleted." });
+  } catch (_error) {
+    return res.status(500).json({ message: "Unable to delete account right now." });
   }
 });
 
