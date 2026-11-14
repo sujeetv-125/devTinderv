@@ -4,67 +4,70 @@ const User = require("../models/user");
 const { validateSignUpData } = require("../utils/validations");
 
 const authRouter = express.Router();
+const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: COOKIE_MAX_AGE,
+  };
+}
 
 authRouter.post("/signup", async (req, res) => {
   try {
-    // validate data
-    validateSignUpData(req);
+    validateSignUpData(req.body);
+    const emailId = req.body.emailId.trim().toLowerCase();
+    const existingUser = await User.findOne({ emailId }).lean();
+    if (existingUser) {
+      return res.status(409).json({ message: "An account with this email already exists." });
+    }
 
-    // encrypt the password
-    const { firstName, lastName, emailId, password } = req.body;
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    // creating a new instance of the user model
-    const user = new User({
-      firstName,
-      lastName,
+    const password = await bcrypt.hash(req.body.password, 12);
+    const user = await User.create({
+      firstName: req.body.firstName.trim(),
+      lastName: (req.body.lastName || "").trim(),
       emailId,
-      password: passwordHash,
+      password,
     });
 
-    await user.save();
-    res.send("user added successfully");
-  } catch (err) {
-    res.status(400).send("ERROR: " + err.message);
+    return res.status(201).json({ message: "Your DevBridge account has been created.", user });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ message: "An account with this email already exists." });
+    }
+    return res.status(400).json({ message: error.message });
   }
 });
 
 authRouter.post("/login", async (req, res) => {
   try {
-    const { emailId, password } = req.body;
-    if (!emailId || !password) {
-      throw new Error("Invalid credentials");
+    const { emailId, password } = req.body || {};
+    if (typeof emailId !== "string" || typeof password !== "string") {
+      return res.status(400).json({ message: "Email and password are required." });
     }
 
-    const user = await User.findOne({ emailId: emailId });
-    if (!user) {
-      throw new Error("Invalid credentials");
+    const user = await User.findOne({ emailId: emailId.trim().toLowerCase() }).select("+password");
+    if (!user || !(await user.validatePassword(password))) {
+      return res.status(401).json({ message: "Invalid email or password." });
     }
 
-    // must pass the password and await the bcrypt comparison
-    const isPasswordValid = await user.validatePassword(password);
-    if (!isPasswordValid) {
-      throw new Error("Invalid credentials");
-    }
-
-    const token = await user.getJWT();
-
-    res.cookie("token", token, {
-      expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days, same as the JWT
-      httpOnly: true,
-    });
-
-    res.send("login successful");
-  } catch (err) {
-    res.status(400).send("ERROR: " + err.message);
+    const token = user.getJWT();
+    return res.cookie("token", token, cookieOptions()).json({ message: "Login successful.", user });
+  } catch (_error) {
+    return res.status(500).json({ message: "Unable to log in right now." });
   }
 });
 
-authRouter.post("/logout",async (req,res) =>{
-  res.cookie("token", null, {
-    expires: new Date(Date.now()),
-  });
-  res.send("logout successful");
+authRouter.post("/logout", (_req, res) => {
+  return res.clearCookie("token", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+  }).json({ message: "Logged out successfully." });
 });
 
 module.exports = authRouter;

@@ -1,32 +1,26 @@
 const jwt = require("jsonwebtoken");
 const User = require("./models/user");
 
-// NOTE: must be the exact same secret used in userSchema.methods.getJWT (models/user.js)
-const JWT_SECRET = "DEV@tinder#123";
-
-const userAuth = async (req, res, next) => {
+async function userAuth(req, res, next) {
   try {
-    const { token } = req.cookies;
-    if (!token) {
-      return res.status(401).send("Please login");
+    const token = req.cookies && req.cookies.token;
+    if (!token) return res.status(401).json({ message: "Authentication required." });
+    if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not configured.");
+
+    const payload = jwt.verify(token, process.env.JWT_SECRET, { issuer: "devbridge-api" });
+    const user = await User.findById(payload.sub).select("+password +passwordChangedAt");
+    if (!user) return res.status(401).json({ message: "Session is no longer valid." });
+
+    // Changing a password invalidates tokens issued before that change.
+    if (user.passwordChangedAt && payload.iat * 1000 < user.passwordChangedAt.getTime()) {
+      return res.status(401).json({ message: "Your password changed. Please log in again." });
     }
 
-    const decodedObj = jwt.verify(token, JWT_SECRET);
-    const { _id } = decodedObj;
-
-    // never load the password hash into req.user
-    const user = await User.findById(_id).select("-password");
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    req.user = user; // makes the user available to the route handlers
-    next();
-  } catch (err) {
-    res.status(401).send("ERROR: " + err.message);
+    req.user = user;
+    return next();
+  } catch (_error) {
+    return res.status(401).json({ message: "Invalid or expired session." });
   }
-};
+}
 
-module.exports = {
-  userAuth,
-};
+module.exports = { userAuth };
