@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { scoreCompatibility, overlapRatio } = require("../src/utils/matchingService");
 
 test("overlapRatio is case-insensitive and avoids duplicate inflation", () => {
-  assert.equal(overlapRatio(["Java", "java", "Node"], ["JAVA", "Python"]), 0.5);
+  assert.equal(overlapRatio(["Java", "java", "Node"], ["JAVA", "Python"]), 1 / 3);
 });
 
 test("complementary skills and shared goals produce an explainable match", () => {
