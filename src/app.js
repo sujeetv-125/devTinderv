@@ -25,7 +25,7 @@ function createApp() {
   app.use((_req, res) => res.status(404).json({ message: "Route not found." }));
   app.use((error, _req, res, _next) => {
     if (res.headersSent) return;
-    const status = error.statusCode || 500;
+    const status = error.statusCode || error.status || 500;
     res.status(status).json({
       message: status >= 500 ? "Something went wrong." : error.message,
     });
